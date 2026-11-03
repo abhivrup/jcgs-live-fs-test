@@ -242,6 +242,7 @@
     </style>
   </head>
   <body>
+    <div id="fsdbg" style="position:fixed;top:4px;left:50%;transform:translateX(-50%);z-index:99999;background:rgba(0,0,0,.78);color:#fff;font:11px/1.4 monospace;padding:5px 8px;border-radius:6px;max-width:96vw;white-space:pre-wrap;pointer-events:none;text-align:left;">DBG loading...</div>
     <div class="stage">
       <div class="ipod" id="ipod">
         <div class="bezel">
@@ -536,7 +537,9 @@
         f.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
       } catch (e) { /* garnish only */ }
     }
-    /* Android installed app (manifest "orientation": "portrait") stays
+    /* TEST ONLY (fs-test v2): manifest orientation is "any" in this
+       test build, and the lock result is shown in the on-screen DBG
+       panel. Android installed app (manifest "orientation": "portrait") stays
        portrait when the phone rotates, including in YouTube fullscreen
        — the YouTube player's own fullscreen button is inside the
        iframe, so the app gets no tap of its own to lock from. Tip the
@@ -547,18 +550,25 @@
        leaves today's behavior unchanged. iPhone Safari has no lock
        API; the guards make this a no-op there. Exiting fullscreen
        clears a lock automatically; unlock() is called anyway. */
+    var FSDBG_LAST_LOCK = "not attempted";
     function syncFsOrientation() {
       try {
-        if (!window.screen || !screen.orientation) return;
+        if (!window.screen || !screen.orientation) { FSDBG_LAST_LOCK = "no screen.orientation"; fsDbgUpdate(); return; }
         if (document.fullscreenElement || document.webkitFullscreenElement) {
           if (screen.orientation.lock) {
+            FSDBG_LAST_LOCK = "lock(landscape) pending...";
             var lp = screen.orientation.lock("landscape");
-            if (lp && lp.catch) lp.catch(function () {});
-          }
+            if (lp && lp.then) {
+              lp.then(function () { FSDBG_LAST_LOCK = "lock(landscape) OK"; fsDbgUpdate(); },
+                      function (err) { FSDBG_LAST_LOCK = "lock REJECTED: " + (err && err.name ? err.name : String(err)); fsDbgUpdate(); });
+            } else { FSDBG_LAST_LOCK = "lock() returned no promise"; }
+          } else { FSDBG_LAST_LOCK = "no lock() API"; }
         } else if (screen.orientation.unlock) {
           screen.orientation.unlock();
+          FSDBG_LAST_LOCK = "unlocked on fs exit";
         }
-      } catch (e) { /* optional garnish */ }
+      } catch (e) { FSDBG_LAST_LOCK = "lock threw: " + (e && e.name ? e.name : String(e)); }
+      fsDbgUpdate();
     }
     document.addEventListener("fullscreenchange", syncFsOrientation);
     document.addEventListener("webkitfullscreenchange", syncFsOrientation);
@@ -1427,6 +1437,37 @@ var items = [];
 
     $("appVersion").textContent = APP_VERSION;
       render();
+    </script>
+    <script>
+      // TEST ONLY diagnostics (fs-test v2). Read-only: shows display mode,
+      // orientation, fullscreen state, lock() outcome and a short event log.
+      // pointer-events:none on the panel, so it can never block taps.
+      var FSDBG_LOG = [];
+      function fsDbgLog(msg) {
+        try {
+          FSDBG_LOG.push(new Date().toLocaleTimeString() + " " + msg);
+          if (FSDBG_LOG.length > 20) FSDBG_LOG = FSDBG_LOG.slice(-20);
+        } catch (e) {}
+        fsDbgUpdate();
+      }
+      function fsDbgUpdate() {
+        var el = document.getElementById("fsdbg");
+        if (!el) return;
+        var standalone = false;
+        try { standalone = !!(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches); } catch (e) {}
+        var o = "n/a";
+        try { o = screen.orientation ? (screen.orientation.type + " " + screen.orientation.angle) : "n/a"; } catch (e) { o = "err"; }
+        var fs = (document.fullscreenElement || document.webkitFullscreenElement) ? "yes" : "no";
+        var lk = "not attempted";
+        try { if (typeof FSDBG_LAST_LOCK !== "undefined" && FSDBG_LAST_LOCK) lk = FSDBG_LAST_LOCK; } catch (e) {}
+        el.textContent = "DBG mode=" + (standalone ? "standalone" : "browser-tab") + " orient=" + o + " fs=" + fs + " " + window.innerWidth + "x" + window.innerHeight + "\nlock: " + lk + "\n" + FSDBG_LOG.slice(-3).join("\n");
+      }
+      document.addEventListener("fullscreenchange", function () { fsDbgLog("fschange fs=" + ((document.fullscreenElement || document.webkitFullscreenElement) ? "yes" : "no")); });
+      document.addEventListener("webkitfullscreenchange", function () { fsDbgLog("webkit fschange"); });
+      try { if (screen.orientation) screen.orientation.addEventListener("change", function () { fsDbgLog("orient change"); }); } catch (e) {}
+      window.addEventListener("resize", function () { fsDbgLog("resize " + window.innerWidth + "x" + window.innerHeight); });
+      fsDbgLog("loaded");
+      setTimeout(fsDbgUpdate, 600);
     </script>
   </body>
 </html>
